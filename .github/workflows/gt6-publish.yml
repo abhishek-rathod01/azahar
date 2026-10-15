@@ -5,6 +5,11 @@ name: gt6-publish
 # order in which the builds can update each other.
 
 on:
+  # Only so GitHub registers this workflow (a manual-only workflow that lives on a non-default
+  # branch is not found by the dispatch API until it has run once). The job below skips itself.
+  push:
+    branches: [ gt6 ]
+    paths: [ ".github/workflows/gt6-publish.yml" ]
   workflow_dispatch:
     inputs:
       run_id:
@@ -21,6 +26,7 @@ permissions:
 
 jobs:
   publish:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
