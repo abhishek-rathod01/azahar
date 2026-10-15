@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "common/perf_log.h"
 #include "common/settings.h"
 #include "core/core.h"
 #include "core/frontend/emu_window.h"
@@ -47,7 +48,14 @@ void RendererBase::EndFrame() {
 
     render_window.PollEvents();
 
+    const bool perf_log = Common::PerfLog::IsEnabled();
+    if (perf_log) {
+        Common::PerfLog::FrameReady();
+    }
     system.frame_limiter.DoFrameLimiting(system.CoreTiming().GetGlobalTimeUs());
+    if (perf_log) {
+        Common::PerfLog::FrameDone(system.CoreTiming().GetGlobalTimeUs().count());
+    }
     system.perf_stats->BeginSystemFrame();
 }
 
