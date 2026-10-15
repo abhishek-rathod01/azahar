@@ -234,6 +234,8 @@ class Settings {
         const val PREF_SHOW_HOME_APPS = "ShowHomeApps"
         const val PREF_STATIC_THEME_COLOR = "StaticThemeColor"
         const val PREF_GT6_PERF_LOG = "Gt6PerfLog"
+        const val PREF_GT6_RAISE_PRIORITY = "Gt6RaisePriority"
+        const val PREF_GT6_PERFORMANCE_HINTS = "Gt6PerformanceHints"
 
         private val configFileSectionsMap: MutableMap<String, List<String>> = HashMap()
 

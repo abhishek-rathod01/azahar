@@ -6,6 +6,7 @@
 #include <fmt/format.h>
 #include <jni.h>
 #include "common/file_util.h"
+#include "common/frame_pacing.h"
 #include "common/perf_log.h"
 #include "common/settings.h"
 #include "jni/android_common/android_common.h"
@@ -37,6 +38,7 @@ std::string BuildHeader(const std::string& device_info) {
     out += fmt::format("texture_filter={}\n", static_cast<int>(v.texture_filter.GetValue()));
     out += fmt::format("enable_audio_stretching={}\n", v.enable_audio_stretching.GetValue());
     out += fmt::format("enable_realtime_audio={}\n", v.enable_realtime_audio.GetValue());
+    out += Common::FramePacing::Describe() + "\n";
     return out;
 }
 

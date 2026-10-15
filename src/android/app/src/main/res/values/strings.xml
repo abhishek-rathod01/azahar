@@ -1124,5 +1124,9 @@
     <string name="gt6_perf_log" translatable="false">Performance Log (GT6)</string>
     <string name="gt6_perf_log_description" translatable="false">Writes a per-frame CSV (frame time, emulation speed, refresh rate, CPU core, thermal state, events) to the log folder in the user directory while a game runs. Applies the next time a game is started. Shows a small MARK button on the game screen. Leave off for normal play.</string>
     <string name="gt6_perf_log_mark" translatable="false">MARK</string>
+    <string name="gt6_raise_priority" translatable="false">Raise game thread priority (GT6)</string>
+    <string name="gt6_raise_priority_description" translatable="false">Gives the emulation and graphics threads a slightly higher CPU scheduling priority. Applies the next time a game is started. On by default; turn off to compare.</string>
+    <string name="gt6_performance_hints" translatable="false">Performance hints (GT6)</string>
+    <string name="gt6_performance_hints_description" translatable="false">Tells Android how long each frame of work takes (ADPF, Android 13 and newer) so it can choose CPU speed and cores for the frame. Applies the next time a game is started. On by default; turn off to compare.</string>
 
 </resources>

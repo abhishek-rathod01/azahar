@@ -1887,6 +1887,22 @@ class SettingsFragmentPresenter(private val fragmentView: SettingsFragmentView) 
         }
     }
 
+    /** A switch stored in SharedPreferences instead of config.ini (GT6 options). */
+    private fun preferenceSwitch(prefKey: String, default: Boolean): AbstractBooleanSetting =
+        object : AbstractBooleanSetting {
+            override var boolean: Boolean
+                get() = preferences.getBoolean(prefKey, default)
+                set(value) {
+                    preferences.edit().putBoolean(prefKey, value).apply()
+                }
+            override val key: String? = null
+            override val section: String? = null
+            override val isRuntimeEditable: Boolean = false
+            override val valueAsString: String
+                get() = preferences.getBoolean(prefKey, default).toString()
+            override val defaultValue = default
+        }
+
     private fun addDebugSettings(sl: ArrayList<SettingsItem>) {
         settingsActivity.setToolbarTitle(settingsActivity.getString(R.string.preferences_debug))
         sl.apply {
@@ -1912,6 +1928,20 @@ class SettingsFragmentPresenter(private val fragmentView: SettingsFragmentView) 
                     perfLog,
                     R.string.gt6_perf_log,
                     R.string.gt6_perf_log_description
+                )
+            )
+            add(
+                SwitchSetting(
+                    preferenceSwitch(Settings.PREF_GT6_RAISE_PRIORITY, true),
+                    R.string.gt6_raise_priority,
+                    R.string.gt6_raise_priority_description
+                )
+            )
+            add(
+                SwitchSetting(
+                    preferenceSwitch(Settings.PREF_GT6_PERFORMANCE_HINTS, true),
+                    R.string.gt6_performance_hints,
+                    R.string.gt6_performance_hints_description
                 )
             )
 
