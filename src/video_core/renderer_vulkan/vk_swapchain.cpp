@@ -4,8 +4,10 @@
 
 #include <algorithm>
 #include <limits>
+#include <fmt/format.h>
 #include "common/logging/log.h"
 #include "common/microprofile.h"
+#include "common/perf_log.h"
 #include "common/settings.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
@@ -88,6 +90,12 @@ void Swapchain::Create(u32 width_, u32 height_, vk::SurfaceKHR surface_, bool lo
 
     SetupImages();
     RefreshSemaphores();
+
+    if (Common::PerfLog::IsEnabled()) {
+        Common::PerfLog::Event(
+            fmt::format("swapchain_created present_mode={} extent={}x{} images={}",
+                        vk::to_string(present_mode), extent.width, extent.height, image_count));
+    }
 }
 
 bool Swapchain::AcquireNextImage() {
@@ -108,6 +116,9 @@ bool Swapchain::AcquireNextImage() {
     case vk::Result::eErrorSurfaceLostKHR:
     case vk::Result::eErrorOutOfDateKHR:
         needs_recreation = true;
+        if (Common::PerfLog::IsEnabled()) {
+            Common::PerfLog::Event(fmt::format("swapchain_acquire_{}", vk::to_string(result)));
+        }
         break;
     default:
         LOG_CRITICAL(Render_Vulkan, "Swapchain acquire returned unknown result {}", result);
@@ -132,9 +143,15 @@ void Swapchain::Present() {
         [[maybe_unused]] vk::Result result = instance.GetPresentQueue().presentKHR(present_info);
     } catch (vk::OutOfDateKHRError&) {
         needs_recreation = true;
+        if (Common::PerfLog::IsEnabled()) {
+            Common::PerfLog::Event("swapchain_present_OutOfDate");
+        }
         return;
     } catch (vk::SurfaceLostKHRError&) {
         needs_recreation = true;
+        if (Common::PerfLog::IsEnabled()) {
+            Common::PerfLog::Event("swapchain_present_SurfaceLost");
+        }
         return;
     } catch (const vk::SystemError& err) {
         LOG_CRITICAL(Render_Vulkan, "Swapchain presentation failed {}", err.what());
