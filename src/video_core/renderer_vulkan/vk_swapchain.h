@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <mutex>
 #include <vector>
 #include "common/common_types.h"
@@ -25,6 +26,11 @@ public:
 
     /// Acquires the next image in the swapchain.
     bool AcquireNextImage();
+
+    /// True if the swapchain is unusable until Create() succeeds again (out of date, surface lost)
+    [[nodiscard]] bool NeedsRecreation() const {
+        return needs_recreation;
+    }
 
     /// Presents the current image and move to the next one
     void Present();
@@ -107,6 +113,7 @@ private:
     u32 frame_index = 0;
     bool needs_recreation = true;
     bool low_refresh_rate;
+    std::chrono::steady_clock::time_point last_create_time{};
 };
 
 } // namespace Vulkan

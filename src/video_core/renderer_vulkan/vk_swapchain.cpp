@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #include <algorithm>
+#include <chrono>
 #include <limits>
 #include <fmt/format.h>
 #include "common/logging/log.h"
@@ -16,6 +17,10 @@ MICROPROFILE_DEFINE(Vulkan_Acquire, "Vulkan", "Swapchain Acquire", MP_RGB(185, 6
 MICROPROFILE_DEFINE(Vulkan_Present, "Vulkan", "Swapchain Present", MP_RGB(66, 185, 245));
 
 namespace Vulkan {
+
+namespace {
+constexpr auto SUBOPTIMAL_REBUILD_INTERVAL = std::chrono::seconds(1);
+} // Anonymous namespace
 
 Swapchain::Swapchain(const Instance& instance_, u32 width, u32 height, vk::SurfaceKHR surface_,
                      bool low_refresh_rate)
@@ -90,6 +95,7 @@ void Swapchain::Create(u32 width_, u32 height_, vk::SurfaceKHR surface_, bool lo
 
     SetupImages();
     RefreshSemaphores();
+    last_create_time = std::chrono::steady_clock::now();
 
     if (Common::PerfLog::IsEnabled()) {
         Common::PerfLog::Event(
@@ -113,6 +119,16 @@ bool Swapchain::AcquireNextImage() {
     case vk::Result::eSuccess:
         break;
     case vk::Result::eSuboptimalKHR:
+        // The acquired image can still be presented. Rebuild the swapchain, but at most once per
+        // interval: a driver that keeps reporting 'suboptimal' for a transform it cannot match
+        // would otherwise get the swapchain rebuilt (with a full GPU idle) on every frame.
+        if (std::chrono::steady_clock::now() - last_create_time >= SUBOPTIMAL_REBUILD_INTERVAL) {
+            needs_recreation = true;
+            if (Common::PerfLog::IsEnabled()) {
+                Common::PerfLog::Event("swapchain_acquire_Suboptimal");
+            }
+        }
+        break;
     case vk::Result::eErrorSurfaceLostKHR:
     case vk::Result::eErrorOutOfDateKHR:
         needs_recreation = true;
