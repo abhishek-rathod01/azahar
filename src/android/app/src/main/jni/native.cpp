@@ -104,6 +104,15 @@ std::mutex paused_mutex;
 std::mutex running_mutex;
 std::condition_variable running_cv;
 
+// Wakes the emulation thread if it is sleeping in the paused wait. Call after changing
+// pause_emulation / stop_run. The mutex has to be taken in between: the waiter evaluates its
+// predicate and blocks while holding it, so without this a wake-up that arrives after the
+// predicate check but before the block is lost and emulation stays asleep.
+void WakeEmulationThread() {
+    { std::scoped_lock lock{paused_mutex}; }
+    running_cv.notify_all();
+}
+
 // Guards the lifetime of s_surface/s_secondary_surface and the (re)creation of the
 // EmuWindow_Android and renderer objects that consume them. Android may destroy or replace the
 // Surface passed to us (on rotation, or if the fragment hosting the SurfaceView is torn
@@ -844,7 +853,7 @@ jboolean JNICALL Java_org_citra_citra_1emu_utils_GpuDriverHelper_supportsCustomD
 void Java_org_citra_citra_1emu_NativeLibrary_unPauseEmulation([[maybe_unused]] JNIEnv* env,
                                                               [[maybe_unused]] jobject obj) {
     pause_emulation = false;
-    running_cv.notify_all();
+    WakeEmulationThread();
     auto* handler = InputManager::NDKMotionHandler();
     if (handler) {
         handler->EnableSensors();
@@ -873,7 +882,7 @@ void Java_org_citra_citra_1emu_NativeLibrary_stopEmulation([[maybe_unused]] JNIE
     if (secondary_window) {
         secondary_window->StopPresenting();
     }
-    running_cv.notify_all();
+    WakeEmulationThread();
 }
 
 jboolean Java_org_citra_citra_1emu_NativeLibrary_isRunning([[maybe_unused]] JNIEnv* env,
@@ -1055,7 +1064,7 @@ void Java_org_citra_citra_1emu_NativeLibrary_run__Ljava_lang_String_2(JNIEnv* en
 
     if (!stop_run) {
         stop_run = true;
-        running_cv.notify_all();
+        WakeEmulationThread();
     }
 
     const Core::System::ResultStatus result{RunCitra(path)};
