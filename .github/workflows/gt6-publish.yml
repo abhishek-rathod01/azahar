@@ -19,6 +19,10 @@ on:
         description: "Title of the release (empty = 'Azahar GT6 <name of the APK>')"
         required: false
         default: ""
+      target:
+        description: "Branch or commit the release tag points at (empty = the commit the APK was built from)"
+        required: false
+        default: ""
 
 permissions:
   contents: write # create the release
@@ -37,6 +41,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ inputs.run_id }}
           RELEASE_TITLE: ${{ inputs.release_title }}
+          TARGET_INPUT: ${{ inputs.target }}
         run: |
           set -ex
           case "${RUN_ID}" in ''|*[!0-9]*) echo "::error::run_id must be a number"; exit 1 ;; esac
@@ -57,10 +62,15 @@ jobs:
           SHORT_SHA="${STEM%%-*}"
           FULL_SHA="$(gh api "repos/${GH_REPO}/commits/${SHORT_SHA}" --jq .sha)"
           TITLE="${RELEASE_TITLE:-Azahar GT6 ${NAME}}"
+          TARGET="${TARGET_INPUT:-${FULL_SHA}}"
           (cd "$(dirname "${APK}")" && sha256sum "${NAME}") > dl/sha256.txt
           {
             echo "Built by GitHub Actions from commit \`${FULL_SHA}\` of this fork (run ${RUN_ID}); published from that run's artifact, not rebuilt."
             echo
+            if [ "${TARGET}" != "${FULL_SHA}" ]; then
+              echo "The release tag points at \`${TARGET}\` as it was when this was published; the APK itself was built from the commit above."
+              echo
+            fi
             echo "Signed with a TEST key kept in the Actions cache. Updating over an older build of this fork works as long as the key is unchanged; if Android says the app conflicts with an existing package, uninstall the old copy once (the app's own switches reset; copy your Azahar user folder somewhere first to be safe)."
             echo
             echo "Package \`org.azahar_emu.azahar.gt6\`: installs next to the official Azahar, never over it."
@@ -75,8 +85,12 @@ jobs:
             echo "::error::Release ${TAG} already exists"
             exit 1
           fi
-          gh release create "${TAG}" "${APK}" dl/sha256.txt \
-            --target "${FULL_SHA}" --prerelease --title "${TITLE}" --notes-file dl/release-notes.md
+          if ! gh release create "${TAG}" "${APK}" dl/sha256.txt \
+            --target "${TARGET}" --prerelease --title "${TITLE}" --notes-file dl/release-notes.md; then
+            echo "::warning::Release creation was refused (tag ${TAG} -> ${TARGET}). What the token may do:"
+            gh api "repos/${GH_REPO}" --jq '{fork, archived, token_can_push: .permissions.push}' || true
+            exit 1
+          fi
           URL="$(gh release view "${TAG}" --json url --jq .url)"
           echo "Release: ${URL}"
           echo "### Release: ${URL}" >> "$GITHUB_STEP_SUMMARY"
