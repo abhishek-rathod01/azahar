@@ -23,6 +23,12 @@ possible so that rebasing onto a newer tag stays cheap.
 | `ci` | `"!gt6"` added to the push branches of `build.yml` and `libretro.yml` | Both upstream workflows otherwise build on every push to every branch. Confirmed on GitHub: only `gt6-android` and the cheap `format` check run. |
 | `common`, `video_core`, `android` | Performance Log (see below) | Needed to find the cause of the jitter bug with data instead of guesses. Off by default. |
 | `tools/gt6` | Termux helper `gt6` + host test for the logger | Collects what the app cannot see (CPU frequencies, SurfaceFlinger, thermal service, crash buffer) and automates stability tests. |
+| `tools/gt6` | `analyze_perf.py` (+11 unit tests) | Computes average FPS, p99, 1 % low, stutters and jitter episodes (p99 > 25 ms for > 2 s) from the logs; the tests found and fixed two of its own bugs before it saw real data. |
+| `android` (F1) | Re-apply the 60 Hz display mode on resume and window focus, robust mode matching, `Surface.setFrameRate(60, FIXED_SOURCE, ALWAYS)` on each surface change (API 31+), and a display listener that re-asserts 60 Hz while emulating (max 5 times, 2 s apart) | H1: nothing re-asserted 60 Hz after the one call in `onCreate`; the old code matched the mode with `refreshRate == 60f` and silently did nothing if no mode matched exactly. Menus keep requesting the maximum rate. |
+| `video_core` (F2) | Rebuild a stale swapchain on the current Android surface instead of waiting for a new one; rebuild a *suboptimal* one at most once per second | Upstream's recreate path waited for a **different** surface, which never comes when the same surface merely changed size, transform or display mode (split-screen resize), so presentation stalled until the surface was recreated, which is what the Settings round trip does. Not confirmed as the cause of the jitter. |
+| `video_core` | `Swapchain::Destroy()` iterates the semaphore vectors instead of the stale `image_count` | After an early return in `Create()` the vectors are empty but `image_count` is not, so the next `Destroy()` read past the end (undefined behaviour). Upstream is exposed after any surface loss inside `Create()`. |
+| `common`, `android` (F3) | `Common::SetCurrentThreadPriority` works on Android (nice values); the emulation, Vulkan worker and present threads ask for High (nice -2); each frame's work time is reported through ADPF (`dlsym`-loaded, API 33+). Two switches in Settings, Debug (default on) | The old function was never called and is a no-op for `SCHED_OTHER`. The switches let the same APK be compared with and without each measure. The log header and events record what was active. |
+| `video_core` | Driver pipeline cache: integrity footer (size + XXH3), atomic save (temp file + rename), exception-safe read-back | The cache was written in place and validated by its 32-byte Vulkan header only, so a file cut short by a kill or full storage was handed to the GPU driver. Host tests cover every truncation point and single-bit flip. |
 
 ### Performance Log
 
@@ -104,6 +110,19 @@ Choreographer callback (`NativeLibrary.doFrame()` → `TryPresenting()`), i.e. p
 display refresh, while emulation is paced separately by the software frame limiter. And
 `Swapchain::AcquireNextImage` already requests a swapchain recreation on `VK_SUBOPTIMAL_KHR`,
 so part of fix F2 exists upstream.
+
+## Upstream fixes considered and not taken
+
+Looked at what landed on upstream `master` after the 2126.2 tag (the checkout was shallow, so this
+is a review of the commits fetched on 2026-10-14, not an exhaustive history):
+
+| Upstream commit | What | Decision |
+|---|---|---|
+| `f718556` android: fix closing a game launched from a home screen shortcut (#2658) | one-line extra-key typo | Not taken: not a crash, and shortcuts are not in the test plan. Trivial to add later. |
+| `7ea9cee` android: fix black screen when relaunching a game from a shortcut (#2656) | relaunch handling plus a wait for the secondary-screen surface | Not taken: it makes **every** game start wait up to 2 s for a secondary-screen surface, which a phone may never get. Fixes a shortcut-only path. |
+| `2061a99` android: reset turbo when a game starts (#2657) | behaviour fix | Not taken: not a stability fix. |
+| `847d329` shader_jit: masked write optimizations (#2597) | performance | Candidate for the performance phase, to go through the 2 % gate. |
+| `bfa7687`, `fdc7f7a` Vulkan rendering fixes (proctex LUT upload, blend min/max) | correctness | Not taken yet; take if a game shows the symptom. |
 
 ## Before / after
 
