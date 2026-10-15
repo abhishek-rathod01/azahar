@@ -19,7 +19,15 @@ Both use the package `org.azahar_emu.azahar.gt6`, so they install next to the of
 never over it.
 
 **Where to download:** the Releases page of the fork,
-`https://github.com/abhishek-rathod01/azahar/releases`. Tap the `.apk` under *Assets*. The browser
+`https://github.com/abhishek-rathod01/azahar/releases` (no GitHub login needed). The two builds of
+2026-10-15, both signed with the same test key (fingerprint `def92f0b…`):
+
+| Order | App name | Version code | Page |
+|---|---|---|---|
+| 1. install first | Azahar GT6 (baseline: Performance Log, no fixes) | 34046418 | `…/releases/tag/gt6-7f8656f-testkey` |
+| 2. install over it | Azahar Optimised (all fixes) | 34046468 | `…/releases/tag/gt6-8b7f2f5-testkey` |
+
+Tap the `.apk` under *Assets*; the SHA-256 of each file is in the release text. The browser
 asks once to allow installs from it, and Play Protect may warn about an unknown developer; for your
 own build "Install anyway" is the right answer. Each run of *gt6-android* also keeps the same files
 as an Actions artifact (`azahar-gt6-<short-sha>[-testkey]`, a zip) for 30 days.
