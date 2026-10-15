@@ -91,8 +91,18 @@ Acceptance (from the brief): three 60-minute sessions with no jitter episode (p9
 ## Benchmark round (for "faster than the official build")
 
 Same save and scene, same performance mode, background apps closed, Performance Log on for GT6
-builds. **3 runs of 5 minutes** per build with **5 minutes cooldown** between runs, plus one
-15-minute sustained run per milestone. The official app has no Performance Log, so its frame
+builds. Play the scene once as a **warm-up that is not counted** (it fills the shader cache), then
+**3 runs of 5 minutes** per build with **5 minutes cooldown** between runs, plus one 15-minute
+sustained run per milestone.
+
+If both apps use the same Azahar user folder (a good way to make sure the settings are identical),
+they also share the driver cache files in `shaders/vulkan/`. The optimised build appends an
+integrity footer to them and throws away any file without a valid footer, so the first time after
+the official app has written a cache, the optimised build rebuilds it. The official app only checks
+the Vulkan header at the start of the file and so keeps a footered file; the driver then decides
+whether the 24 extra bytes are fine (not yet checked on the phone). Worst case is a slow first
+minute after switching, never wrong output, which is one more reason for the uncounted warm-up run
+after every switch between the apps. The official app has no Performance Log, so its frame
 timing comes from the Termux logger (`GT6_PKG=org.azahar_emu.azahar gt6 log start official`),
 which records what SurfaceFlinger presented. Both builds must run with identical settings; the
 log header records the effective settings of the GT6 build, so also screenshot the official
