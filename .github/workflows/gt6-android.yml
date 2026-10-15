@@ -8,6 +8,11 @@ on:
   push:
     branches: [ gt6 ]
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit SHA to build (empty = the commit this run was started on)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -45,6 +50,7 @@ jobs:
 
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref || github.sha }}
           submodules: recursive
 
       - name: Set up cache
@@ -87,6 +93,33 @@ jobs:
           ccache -s -v
           if [ -n "${ANDROID_KEYSTORE_FILE:-}" ]; then rm -f "${ANDROID_KEYSTORE_FILE}"; fi
 
+      # A mismatch between a Kotlin `external fun` and the exported C symbol only shows up on the
+      # phone as UnsatisfiedLinkError, so compare them here.
+      - name: Verify PerfLog JNI exports
+        run: |
+          set -e
+          KT=src/android/app/src/main/java/org/citra/citra_emu/utils/PerfLog.kt
+          if [ ! -f "$KT" ]; then echo "PerfLog.kt not in this commit, skipping"; exit 0; fi
+          NM="${ANDROID_SDK_ROOT}/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          [ -x "$NM" ] || { echo "::error::llvm-nm not found at $NM"; exit 1; }
+          LIB="$(find src/android/app/build -name libcitra-android.so | head -n 1)"
+          [ -n "$LIB" ] || { echo "::error::libcitra-android.so not found"; exit 1; }
+          echo "checking $LIB"
+          "$NM" -D --defined-only "$LIB" > "$RUNNER_TEMP/syms.txt"
+          missing=0
+          count=0
+          for fn in $(grep -oE 'external fun native[A-Za-z]+' "$KT" | awk '{print $3}'); do
+            count=$((count + 1))
+            if grep -q "Java_org_citra_citra_1emu_utils_PerfLog_${fn}\$" "$RUNNER_TEMP/syms.txt"; then
+              echo "ok   $fn"
+            else
+              echo "::error::PerfLog.$fn has no exported JNI symbol"
+              missing=1
+            fi
+          done
+          [ "$count" -gt 0 ] || { echo "::error::no external funs found in $KT"; exit 1; }
+          exit $missing
+
       - name: Compile check only (no APK published)
         if: steps.secrets.outputs.have_secrets != 'true'
         run: |
@@ -98,7 +131,7 @@ jobs:
         if: steps.secrets.outputs.have_secrets == 'true'
         run: |
           set -ex
-          SHORT_SHA="${GITHUB_SHA::7}"
+          SHORT_SHA="$(git rev-parse --short=7 HEAD)"
           mkdir -p out
           APK_DIR=src/android/app/build/outputs/apk/vanilla/release
           mapfile -t APKS < <(find "$APK_DIR" -maxdepth 1 -name '*.apk')
