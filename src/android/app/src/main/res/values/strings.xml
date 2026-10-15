@@ -1120,4 +1120,9 @@
     <string name="update_check_channel_stable">Stable</string>
     <string name="update_check_channel_prerelease">Prerelease</string>
 
+    <!-- GT6 fork -->
+    <string name="gt6_perf_log" translatable="false">Performance Log (GT6)</string>
+    <string name="gt6_perf_log_description" translatable="false">Writes a per-frame CSV (frame time, emulation speed, refresh rate, CPU core, thermal state, events) to the log folder in the user directory while a game runs. Applies the next time a game is started. Shows a small MARK button on the game screen. Leave off for normal play.</string>
+    <string name="gt6_perf_log_mark" translatable="false">MARK</string>
+
 </resources>

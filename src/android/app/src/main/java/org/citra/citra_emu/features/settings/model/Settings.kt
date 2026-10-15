@@ -233,6 +233,7 @@ class Settings {
         const val PREF_BLACK_BACKGROUNDS = "BlackBackgrounds"
         const val PREF_SHOW_HOME_APPS = "ShowHomeApps"
         const val PREF_STATIC_THEME_COLOR = "StaticThemeColor"
+        const val PREF_GT6_PERF_LOG = "Gt6PerfLog"
 
         private val configFileSectionsMap: MutableMap<String, List<String>> = HashMap()
 

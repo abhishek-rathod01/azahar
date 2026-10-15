@@ -1891,6 +1891,30 @@ class SettingsFragmentPresenter(private val fragmentView: SettingsFragmentView) 
         settingsActivity.setToolbarTitle(settingsActivity.getString(R.string.preferences_debug))
         sl.apply {
             add(HeaderSetting(R.string.debug_warning))
+
+            val perfLog: AbstractBooleanSetting = object : AbstractBooleanSetting {
+                override var boolean: Boolean
+                    get() = preferences.getBoolean(Settings.PREF_GT6_PERF_LOG, false)
+                    set(value) {
+                        preferences.edit()
+                            .putBoolean(Settings.PREF_GT6_PERF_LOG, value)
+                            .apply()
+                    }
+                override val key: String? = null
+                override val section: String? = null
+                override val isRuntimeEditable: Boolean = false
+                override val valueAsString: String
+                    get() = preferences.getBoolean(Settings.PREF_GT6_PERF_LOG, false).toString()
+                override val defaultValue = false
+            }
+            add(
+                SwitchSetting(
+                    perfLog,
+                    R.string.gt6_perf_log,
+                    R.string.gt6_perf_log_description
+                )
+            )
+
             add(
                 SliderSetting(
                     IntSetting.CPU_CLOCK_SPEED,
