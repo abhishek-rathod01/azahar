@@ -203,9 +203,15 @@ class EmulationActivity : AppCompatActivity() {
     // On some devices, the system bars will not disappear on first boot or after some
     // rotations. Here we set full screen immersive repeatedly in onResume and in
     // onWindowFocusChanged to prevent the unwanted status bar state.
+    override fun onPause() {
+        RefreshRateUtil.stopEnforcingSixtyHz(this)
+        super.onPause()
+    }
+
     override fun onResume() {
         enableFullscreenImmersive()
         RefreshRateUtil.enforceRefreshRate(this, sixtyHz = true)
+        RefreshRateUtil.startEnforcingSixtyHz(this)
         if (isEmulationReady) {
             // If emulation is ready then unblock rotation
             isRotationBlocked = false
