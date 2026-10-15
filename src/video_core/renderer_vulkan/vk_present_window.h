@@ -100,6 +100,9 @@ private:
     bool blit_supported;
     bool use_present_thread{true};
     void* last_render_surface{};
+    /// Set (under recreate_surface_mutex) once rebuilding on the current surface failed, meaning
+    /// the surface is gone and only a new one from NotifySurfaceChanged can be used.
+    bool surface_lost{};
 };
 
 } // namespace Vulkan

@@ -32,6 +32,12 @@ public:
         return needs_recreation;
     }
 
+    /// Marks the swapchain unusable until Create() succeeds, e.g. after Create() threw half way
+    /// (it has already destroyed the old swapchain by then).
+    void Invalidate() {
+        needs_recreation = true;
+    }
+
     /// Presents the current image and move to the next one
     void Present();
 

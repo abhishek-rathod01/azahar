@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #include "common/microprofile.h"
+#include "common/perf_log.h"
 #include "common/settings.h"
 #include "common/thread.h"
 #include "core/frontend/emu_window.h"
@@ -373,15 +374,58 @@ void PresentWindow::NotifySurfaceChanged() {
 void PresentWindow::CopyToSwapchain(Frame* frame) {
     const auto recreate_swapchain = [&] {
 #ifdef ANDROID
+        bool same_surface = false;
         {
             std::unique_lock lock{recreate_surface_mutex};
-            recreate_surface_cv.wait(lock, [this]() { return surface != next_surface; });
-            surface = next_surface;
+            if (surface == next_surface && !surface_lost) {
+                // The swapchain went out of date or became suboptimal (window resized, transform
+                // or display mode changed) but Android has not given us a different surface, so
+                // none is coming: rebuild on the current one. Waiting for a new surface here would
+                // block presentation until the surface happens to be recreated.
+                same_surface = true;
+                if (Common::PerfLog::IsEnabled()) {
+                    Common::PerfLog::Event("swapchain_rebuild_same_surface");
+                }
+            } else {
+                // The surface was lost: wait for the replacement that surfaceChanged delivers.
+                recreate_surface_cv.wait(lock, [this]() { return surface != next_surface; });
+                surface = next_surface;
+                surface_lost = false;
+            }
         }
-#endif
+        bool rebuild_failed = false;
+        {
+            std::scoped_lock submit_lock{scheduler.submit_mutex};
+            graphics_queue.waitIdle();
+            if (same_surface) {
+                try {
+                    swapchain.Create(frame->width, frame->height, surface, low_refresh_rate);
+                    rebuild_failed = swapchain.NeedsRecreation();
+                } catch (const vk::SystemError& err) {
+                    // Swapchain::Create rethrows everything except 'surface lost'. A window that
+                    // died without a notification can fail with other codes, so treat any failure
+                    // on this path as 'surface gone' and wait for a new one. Create() has already
+                    // destroyed the old swapchain, so it must not be used until it is rebuilt.
+                    LOG_WARNING(Render_Vulkan,
+                                "Rebuilding the swapchain on the current surface "
+                                "failed ({}), waiting for a new surface",
+                                err.what());
+                    swapchain.Invalidate();
+                    rebuild_failed = true;
+                }
+            } else {
+                swapchain.Create(frame->width, frame->height, surface, low_refresh_rate);
+            }
+        }
+        if (rebuild_failed) {
+            std::scoped_lock lock{recreate_surface_mutex};
+            surface_lost = true;
+        }
+#else
         std::scoped_lock submit_lock{scheduler.submit_mutex};
         graphics_queue.waitIdle();
         swapchain.Create(frame->width, frame->height, surface, low_refresh_rate);
+#endif
     };
 
 #ifndef ANDROID
