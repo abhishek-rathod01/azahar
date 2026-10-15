@@ -205,6 +205,7 @@ class EmulationActivity : AppCompatActivity() {
     // onWindowFocusChanged to prevent the unwanted status bar state.
     override fun onResume() {
         enableFullscreenImmersive()
+        RefreshRateUtil.enforceRefreshRate(this, sixtyHz = true)
         if (isEmulationReady) {
             // If emulation is ready then unblock rotation
             isRotationBlocked = false
@@ -225,6 +226,9 @@ class EmulationActivity : AppCompatActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         PerfLog.event(if (hasFocus) "window_focus_gained" else "window_focus_lost")
+        if (hasFocus) {
+            RefreshRateUtil.enforceRefreshRate(this, sixtyHz = true)
+        }
         enableFullscreenImmersive()
         super.onWindowFocusChanged(hasFocus)
     }
