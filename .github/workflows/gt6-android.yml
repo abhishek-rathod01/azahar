@@ -1,8 +1,17 @@
 name: gt6-android
 
-# Android-only build for the Azahar GT6 fork. Signs with the repo secrets
-# ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASS / ANDROID_KEY_ALIAS and uploads
-# the APK as artifact "azahar-gt6-<short-sha>".
+# Android-only build for the Azahar GT6 fork. Always produces an APK and uploads it as the
+# artifact "azahar-gt6-<short-sha>[-testkey]".
+#
+#  * With the repo secrets ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASS / ANDROID_KEY_ALIAS the
+#    APK is signed with the permanent release key.
+#  * Without them it is signed with a throw-away test key ("-testkey" in every name). That key is
+#    kept in the Actions cache so consecutive builds can update each other. GitHub drops cache
+#    entries that were not used for 7 days; after that the next build gets a new key and Android
+#    refuses to update over the old install, so the app has to be uninstalled once.
+#
+# A manual run with "release" ticked also publishes the APK as a GitHub pre-release, which is a
+# direct download link (no zip, no login needed on the phone to tap it).
 
 on:
   push:
@@ -11,6 +20,14 @@ on:
     inputs:
       ref:
         description: "Branch, tag or commit SHA to build (empty = the commit this run was started on)"
+        required: false
+        default: ""
+      release:
+        description: "Also publish the APK as a GitHub pre-release (direct download)"
+        type: boolean
+        default: false
+      release_title:
+        description: "Title of that release (empty = 'Azahar Optimised <short-sha>')"
         required: false
         default: ""
 
@@ -25,15 +42,15 @@ jobs:
   android:
     runs-on: ubuntu-latest
     timeout-minutes: 150
+    permissions:
+      contents: write # only used by the optional release step
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_COMPILERCHECK: content
       CCACHE_SLOPPINESS: time_macros
     steps:
-      # Without the keystore the release build would silently fall back to the
-      # debug key, and an APK signed with a different key cannot update an
-      # installed one. So without secrets we still compile (useful as a compile
-      # check) but never publish an APK.
+      # Decides which key signs the APK. A release build without a keystore falls back to the
+      # debug key, which is what the test-key mode relies on.
       - name: Check signing secrets
         id: secrets
         env:
@@ -45,7 +62,7 @@ jobs:
             echo "have_secrets=true" >> "$GITHUB_OUTPUT"
           else
             echo "have_secrets=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Signing secrets missing (need ANDROID_KEYSTORE_B64, ANDROID_KEYSTORE_PASS, ANDROID_KEY_ALIAS). Compile check only: no APK will be published."
+            echo "::notice::Signing secrets not set: this APK is signed with the cached TEST key (file names end in -testkey)."
           fi
 
       - uses: actions/checkout@v6
@@ -63,6 +80,16 @@ jobs:
           key: ${{ runner.os }}-gt6-android-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-gt6-android-
+
+      # The Android Gradle plugin creates ~/.android/debug.keystore on first use. Caching it under
+      # a fixed key keeps the test key identical from build to build; a cache hit is not saved
+      # again, so the first build's key is the one that stays.
+      - name: Restore test signing key
+        if: steps.secrets.outputs.have_secrets != 'true'
+        uses: actions/cache@v5
+        with:
+          path: ~/.android/debug.keystore
+          key: ${{ runner.os }}-gt6-testkey-v1
 
       - name: Install tools
         run: |
@@ -123,18 +150,15 @@ jobs:
           echo "$checked JNI functions checked"
           exit $missing
 
-      - name: Compile check only (no APK published)
-        if: steps.secrets.outputs.have_secrets != 'true'
-        run: |
-          echo "### Compile check passed, but NO APK was published" >> "$GITHUB_STEP_SUMMARY"
-          echo "Add repo secrets ANDROID_KEYSTORE_B64, ANDROID_KEYSTORE_PASS and ANDROID_KEY_ALIAS, then re-run." >> "$GITHUB_STEP_SUMMARY"
-
       - name: Locate and verify APK
         id: apk
-        if: steps.secrets.outputs.have_secrets == 'true'
+        env:
+          HAVE_SECRETS: ${{ steps.secrets.outputs.have_secrets }}
         run: |
           set -ex
           SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+          SUFFIX=""
+          if [ "${HAVE_SECRETS}" != "true" ]; then SUFFIX="-testkey"; fi
           mkdir -p out
           APK_DIR=src/android/app/build/outputs/apk/vanilla/release
           mapfile -t APKS < <(find "$APK_DIR" -maxdepth 1 -name '*.apk')
@@ -143,29 +167,87 @@ jobs:
             ls -R src/android/app/build/outputs/apk || true
             exit 1
           fi
-          cp "${APKS[0]}" "out/azahar-optimised-${SHORT_SHA}.apk"
+          APK_NAME="azahar-optimised-${SHORT_SHA}${SUFFIX}.apk"
+          cp "${APKS[0]}" "out/${APK_NAME}"
           # R8 is enabled for release: keep the mapping so crash traces can be de-obfuscated
           MAPPING=src/android/app/build/outputs/mapping/vanillaRelease/mapping.txt
-          if [ -f "$MAPPING" ]; then cp "$MAPPING" "out/mapping-${SHORT_SHA}.txt"; fi
-          apksigner verify --verbose --print-certs "out/azahar-optimised-${SHORT_SHA}.apk" | tee out/signature.txt
-          if grep -q "Android Debug" out/signature.txt; then
-            echo "::error::APK is signed with the debug key, not the release keystore"
+          if [ -f "$MAPPING" ]; then cp "$MAPPING" "out/mapping-${SHORT_SHA}${SUFFIX}.txt"; fi
+          apksigner verify --verbose --print-certs "out/${APK_NAME}" | tee out/signature.txt
+          if [ "${HAVE_SECRETS}" = "true" ] && grep -q "Android Debug" out/signature.txt; then
+            echo "::error::APK is signed with the debug key although the release keystore was configured"
             exit 1
           fi
-          sha256sum "out/azahar-optimised-${SHORT_SHA}.apk" | tee out/sha256.txt
+          (cd out && sha256sum "${APK_NAME}" | tee sha256.txt)
+          # What Android will read from the APK (informational: a missing aapt2 does not fail the build)
+          AAPT2="$(ls -d "${ANDROID_SDK_ROOT}"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -n 1 || true)"
+          if [ -n "${AAPT2}" ]; then
+            "${AAPT2}" dump badging "out/${APK_NAME}" | grep -E "^(package|sdkVersion|targetSdkVersion|application-label|native-code):" | tee out/badging.txt || true
+          fi
           echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "suffix=${SUFFIX}" >> "$GITHUB_OUTPUT"
+          echo "apk_name=${APK_NAME}" >> "$GITHUB_OUTPUT"
           {
-            echo "### azahar-gt6-${SHORT_SHA}"
+            echo "### azahar-gt6-${SHORT_SHA}${SUFFIX}"
+            if [ "${HAVE_SECRETS}" = "true" ]; then
+              echo "Signed with the **permanent release key**."
+            else
+              echo "Signed with the cached **test key**. Builds from this branch can update each other while the cache lives; the permanent key needs the three repo secrets."
+            fi
             echo '```'
             cat out/sha256.txt
             grep -E "certificate SHA-256 digest|Verified using" out/signature.txt || true
+            cat out/badging.txt 2>/dev/null || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload APK
-        if: steps.secrets.outputs.have_secrets == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: azahar-gt6-${{ steps.apk.outputs.short_sha }}
+          name: azahar-gt6-${{ steps.apk.outputs.short_sha }}${{ steps.apk.outputs.suffix }}
           path: out/
           retention-days: 30
+
+      # A release is a direct, tap-to-download .apk link. The text inputs go through env vars, never
+      # straight into the script.
+      - name: Publish GitHub pre-release
+        if: inputs.release == true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HAVE_SECRETS: ${{ steps.secrets.outputs.have_secrets }}
+          SHORT_SHA: ${{ steps.apk.outputs.short_sha }}
+          SUFFIX: ${{ steps.apk.outputs.suffix }}
+          APK_NAME: ${{ steps.apk.outputs.apk_name }}
+          RELEASE_TITLE: ${{ inputs.release_title }}
+        run: |
+          set -ex
+          TAG="gt6-${SHORT_SHA}${SUFFIX}"
+          FULL_SHA="$(git rev-parse HEAD)"
+          TITLE="${RELEASE_TITLE:-Azahar Optimised ${SHORT_SHA}}"
+          if [ "${HAVE_SECRETS}" = "true" ]; then
+            KEYNOTE="Signed with the permanent release key."
+          else
+            KEYNOTE="Signed with a TEST key kept in the Actions cache. Updating over an older build of this fork works as long as the key is unchanged; if Android says the app conflicts with an existing package, uninstall the old copy once (games and the Azahar user folder are not touched)."
+          fi
+          {
+            echo "Built by GitHub Actions from commit \`${FULL_SHA}\` of this fork (run ${GITHUB_RUN_ID})."
+            echo
+            echo "${KEYNOTE}"
+            echo
+            echo "Package \`org.azahar_emu.azahar.gt6\`: installs next to the official Azahar, never over it."
+            echo "Not tested on a device when published; see CHANGES.md and docs/GT6-TEST-ROUNDS.md in the repo."
+            echo
+            echo "SHA-256:"
+            echo '```'
+            cat out/sha256.txt
+            echo '```'
+          } > out/release-notes.md
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "out/${APK_NAME}" out/sha256.txt --clobber
+          else
+            gh release create "${TAG}" "out/${APK_NAME}" out/sha256.txt \
+              --target "${FULL_SHA}" --prerelease --title "${TITLE}" --notes-file out/release-notes.md
+          fi
+          URL="$(gh release view "${TAG}" --json url --jq .url)"
+          echo "Release: ${URL}"
+          echo "### Release: ${URL}" >> "$GITHUB_STEP_SUMMARY"
