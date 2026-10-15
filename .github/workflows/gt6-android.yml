@@ -1,0 +1,121 @@
+name: gt6-android
+
+# Android-only build for the Azahar GT6 fork. Signs with the repo secrets
+# ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASS / ANDROID_KEY_ALIAS and uploads
+# the APK as artifact "azahar-gt6-<short-sha>".
+
+on:
+  push:
+    branches: [ gt6 ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gt6-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPILERCHECK: content
+      CCACHE_SLOPPINESS: time_macros
+    steps:
+      # Fail in seconds, not after a 40 minute build, if signing is not set up.
+      # Building without the keystore would silently fall back to the debug key,
+      # and an APK signed with a different key cannot update an installed one.
+      - name: Check signing secrets
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          missing=0
+          [ -n "$KS_B64" ]   || { echo "::error::Repo secret ANDROID_KEYSTORE_B64 is not set"; missing=1; }
+          [ -n "$KS_PASS" ]  || { echo "::error::Repo secret ANDROID_KEYSTORE_PASS is not set"; missing=1; }
+          [ -n "$KS_ALIAS" ] || { echo "::error::Repo secret ANDROID_KEY_ALIAS is not set"; missing=1; }
+          exit $missing
+
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ${{ env.CCACHE_DIR }}
+          key: ${{ runner.os }}-gt6-android-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-gt6-android-
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install ccache apksigner -y
+
+      - name: Update Android SDK CMake version
+        run: |
+          echo "y" | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager "cmake;3.30.3"
+
+      - name: Build (assembleVanillaRelease)
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+        run: |
+          set -ex
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          export NDK_CCACHE="$(which ccache)"
+          export ANDROID_KEYSTORE_FILE="${RUNNER_TEMP}/gt6-release.jks"
+          base64 --decode <<< "${ANDROID_KEYSTORE_B64}" > "${ANDROID_KEYSTORE_FILE}"
+          cd src/android
+          chmod +x ./gradlew
+          ./gradlew assembleVanillaRelease
+          ccache -s -v
+          rm -f "${ANDROID_KEYSTORE_FILE}"
+
+      - name: Locate and verify APK
+        id: apk
+        run: |
+          set -ex
+          SHORT_SHA="${GITHUB_SHA::7}"
+          mkdir -p out
+          APK_DIR=src/android/app/build/outputs/apk/vanilla/release
+          mapfile -t APKS < <(find "$APK_DIR" -maxdepth 1 -name '*.apk')
+          if [ "${#APKS[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly 1 APK in $APK_DIR, found ${#APKS[@]}"
+            ls -R src/android/app/build/outputs/apk || true
+            exit 1
+          fi
+          cp "${APKS[0]}" "out/azahar-gt6-${SHORT_SHA}.apk"
+          # R8 is enabled for release: keep the mapping so crash traces can be de-obfuscated
+          MAPPING=src/android/app/build/outputs/mapping/vanillaRelease/mapping.txt
+          if [ -f "$MAPPING" ]; then cp "$MAPPING" "out/mapping-${SHORT_SHA}.txt"; fi
+          apksigner verify --verbose --print-certs "out/azahar-gt6-${SHORT_SHA}.apk" | tee out/signature.txt
+          if grep -q "Android Debug" out/signature.txt; then
+            echo "::error::APK is signed with the debug key, not the release keystore"
+            exit 1
+          fi
+          sha256sum "out/azahar-gt6-${SHORT_SHA}.apk" | tee out/sha256.txt
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### azahar-gt6-${SHORT_SHA}"
+            echo '```'
+            cat out/sha256.txt
+            grep -E "certificate SHA-256 digest|Verified using" out/signature.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: azahar-gt6-${{ steps.apk.outputs.short_sha }}
+          path: out/
+          retention-days: 30
