@@ -2,7 +2,7 @@ name: citra-libretro
 
 on:
   push:
-    branches: [ "*" ]
+    branches: [ "*", "!gt6" ] # GT6 fork builds via gt6-android.yml only
     tags: [ "*" ]
   pull_request:
     branches: [ master ]
