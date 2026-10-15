@@ -95,29 +95,32 @@ jobs:
 
       # A mismatch between a Kotlin `external fun` and the exported C symbol only shows up on the
       # phone as UnsatisfiedLinkError, so compare them here.
-      - name: Verify PerfLog JNI exports
+      - name: Verify JNI exports of the GT6 Kotlin objects
         run: |
           set -e
-          KT=src/android/app/src/main/java/org/citra/citra_emu/utils/PerfLog.kt
-          if [ ! -f "$KT" ]; then echo "PerfLog.kt not in this commit, skipping"; exit 0; fi
           NM="${ANDROID_SDK_ROOT}/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
           [ -x "$NM" ] || { echo "::error::llvm-nm not found at $NM"; exit 1; }
           LIB="$(find src/android/app/build -name libcitra-android.so | head -n 1)"
           [ -n "$LIB" ] || { echo "::error::libcitra-android.so not found"; exit 1; }
           echo "checking $LIB"
           "$NM" -D --defined-only "$LIB" > "$RUNNER_TEMP/syms.txt"
+          DIR=src/android/app/src/main/java/org/citra/citra_emu/utils
           missing=0
-          count=0
-          for fn in $(grep -oE 'external fun native[A-Za-z]+' "$KT" | awk '{print $3}'); do
-            count=$((count + 1))
-            if grep -q "Java_org_citra_citra_1emu_utils_PerfLog_${fn}\$" "$RUNNER_TEMP/syms.txt"; then
-              echo "ok   $fn"
-            else
-              echo "::error::PerfLog.$fn has no exported JNI symbol"
-              missing=1
-            fi
+          checked=0
+          for cls in PerfLog FramePacing; do
+            KT="$DIR/$cls.kt"
+            if [ ! -f "$KT" ]; then echo "$cls.kt not in this commit, skipping"; continue; fi
+            for fn in $(grep -oE 'external fun native[A-Za-z]+' "$KT" | awk '{print $3}'); do
+              checked=$((checked + 1))
+              if grep -q "Java_org_citra_citra_1emu_utils_${cls}_${fn}\$" "$RUNNER_TEMP/syms.txt"; then
+                echo "ok   $cls.$fn"
+              else
+                echo "::error::$cls.$fn has no exported JNI symbol"
+                missing=1
+              fi
+            done
           done
-          [ "$count" -gt 0 ] || { echo "::error::no external funs found in $KT"; exit 1; }
+          echo "$checked JNI functions checked"
           exit $missing
 
       - name: Compile check only (no APK published)
