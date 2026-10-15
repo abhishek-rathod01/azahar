@@ -81,15 +81,44 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gt6-android-
 
-      # The Android Gradle plugin creates ~/.android/debug.keystore on first use. Caching it under
-      # a fixed key keeps the test key identical from build to build; a cache hit is not saved
-      # again, so the first build's key is the one that stays.
+      # Test-key mode: the workflow makes its own key in a folder it controls and keeps that folder
+      # in the Actions cache, so every later build signs with the same key. (The first attempt
+      # cached ~/.android/debug.keystore, but the build never wrote the key there, so each build
+      # got a new key.) The key is saved right after it is created, not at the end of the job, so
+      # a later failing step cannot lose it.
       - name: Restore test signing key
         if: steps.secrets.outputs.have_secrets != 'true'
-        uses: actions/cache@v5
+        id: testkey_cache
+        uses: actions/cache/restore@v5
         with:
-          path: ~/.android/debug.keystore
-          key: ${{ runner.os }}-gt6-testkey-v1
+          path: ~/.gt6-testkey
+          key: ${{ runner.os }}-gt6-testkey-v2
+
+      - name: Prepare test signing key
+        if: steps.secrets.outputs.have_secrets != 'true'
+        run: |
+          set -e
+          DIR="${HOME}/.gt6-testkey"
+          mkdir -p "${DIR}"
+          if [ -s "${DIR}/test.jks" ] && [ -s "${DIR}/pass.txt" ]; then
+            echo "Reusing the cached test key"
+          else
+            echo "Creating a new test key (no cache entry yet)"
+            rm -f "${DIR}/test.jks"
+            openssl rand -hex 16 > "${DIR}/pass.txt"
+            "${JAVA_HOME_17_X64}/bin/keytool" -genkeypair -storetype PKCS12 \
+              -keystore "${DIR}/test.jks" -alias gt6test -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$(cat "${DIR}/pass.txt")" -keypass "$(cat "${DIR}/pass.txt")" \
+              -dname "CN=Azahar GT6 test key, O=GT6 fork, C=XX"
+          fi
+          echo "::add-mask::$(cat "${DIR}/pass.txt")"
+
+      - name: Save new test signing key
+        if: steps.secrets.outputs.have_secrets != 'true' && steps.testkey_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.gt6-testkey
+          key: ${{ runner.os }}-gt6-testkey-v2
 
       - name: Install tools
         run: |
@@ -113,12 +142,18 @@ jobs:
           if [ "${HAVE_SECRETS}" = "true" ]; then
             export ANDROID_KEYSTORE_FILE="${RUNNER_TEMP}/gt6-release.jks"
             base64 --decode <<< "${ANDROID_KEYSTORE_B64}" > "${ANDROID_KEYSTORE_FILE}"
+          else
+            # Test-key mode goes through the same Gradle signing settings as the release key
+            export ANDROID_KEYSTORE_FILE="${HOME}/.gt6-testkey/test.jks"
+            ANDROID_KEYSTORE_PASS="$(cat "${HOME}/.gt6-testkey/pass.txt")"
+            export ANDROID_KEYSTORE_PASS
+            export ANDROID_KEY_ALIAS=gt6test
           fi
           cd src/android
           chmod +x ./gradlew
           ./gradlew assembleVanillaRelease
           ccache -s -v
-          if [ -n "${ANDROID_KEYSTORE_FILE:-}" ]; then rm -f "${ANDROID_KEYSTORE_FILE}"; fi
+          if [ "${HAVE_SECRETS}" = "true" ]; then rm -f "${ANDROID_KEYSTORE_FILE}"; fi
 
       # A mismatch between a Kotlin `external fun` and the exported C symbol only shows up on the
       # phone as UnsatisfiedLinkError, so compare them here.
@@ -210,7 +245,9 @@ jobs:
       # A release is a direct, tap-to-download .apk link. The text inputs go through env vars, never
       # straight into the script.
       - name: Publish GitHub pre-release
+        id: release
         if: inputs.release == true
+        continue-on-error: true # the APK is already in the artifact; a refused release must not fail the build
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -251,3 +288,17 @@ jobs:
           URL="$(gh release view "${TAG}" --json url --jq .url)"
           echo "Release: ${URL}"
           echo "### Release: ${URL}" >> "$GITHUB_STEP_SUMMARY"
+
+      # Shows what the build token is allowed to do when the release was refused.
+      - name: Why the release failed
+        if: steps.release.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          echo "::warning::The GitHub release could not be created. The APK is still in this run's artifact."
+          gh api "repos/${GH_REPO}" --jq '{full_name, fork, archived, token_can_push: .permissions.push, token_is_admin: .permissions.admin}' || true
+          {
+            echo "### The release could not be created"
+            echo "The APK is in this run's artifact. In the fork's *Settings > Actions > General > Workflow permissions*, choose *Read and write permissions* and re-run."
+          } >> "$GITHUB_STEP_SUMMARY"
