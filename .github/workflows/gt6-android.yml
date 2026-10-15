@@ -227,7 +227,7 @@ jobs:
           if [ "${HAVE_SECRETS}" = "true" ]; then
             KEYNOTE="Signed with the permanent release key."
           else
-            KEYNOTE="Signed with a TEST key kept in the Actions cache. Updating over an older build of this fork works as long as the key is unchanged; if Android says the app conflicts with an existing package, uninstall the old copy once (games and the Azahar user folder are not touched)."
+            KEYNOTE="Signed with a TEST key kept in the Actions cache. Updating over an older build of this fork works as long as the key is unchanged; if Android says the app conflicts with an existing package, uninstall the old copy once (the app's own switches reset; copy your Azahar user folder somewhere first to be safe)."
           fi
           {
             echo "Built by GitHub Actions from commit \`${FULL_SHA}\` of this fork (run ${GITHUB_RUN_ID})."
