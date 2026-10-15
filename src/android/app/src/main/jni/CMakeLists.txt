@@ -28,6 +28,7 @@ add_library(citra-android SHARED
     native.cpp
     ndk_motion.cpp
     ndk_motion.h
+    perf_log_jni.cpp
     system_save_game.cpp
     native_log.cpp
 )
