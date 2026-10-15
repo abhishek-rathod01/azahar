@@ -63,7 +63,8 @@ android {
     defaultConfig {
         // The application ID refers to Lime3DS to allow for
         // the Play Store listing, which was originally set up for Lime3DS, to still be used.
-        applicationId = "org.azahar_emu.azahar"
+        // GT6 fork: ".gt6" suffix so it installs alongside the official Azahar
+        applicationId = "org.azahar_emu.azahar.gt6"
         minSdk = 29
         targetSdk = 37
         versionCode = autoVersion
