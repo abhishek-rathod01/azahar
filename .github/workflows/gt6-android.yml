@@ -140,16 +140,16 @@ jobs:
             ls -R src/android/app/build/outputs/apk || true
             exit 1
           fi
-          cp "${APKS[0]}" "out/azahar-gt6-${SHORT_SHA}.apk"
+          cp "${APKS[0]}" "out/azahar-optimised-${SHORT_SHA}.apk"
           # R8 is enabled for release: keep the mapping so crash traces can be de-obfuscated
           MAPPING=src/android/app/build/outputs/mapping/vanillaRelease/mapping.txt
           if [ -f "$MAPPING" ]; then cp "$MAPPING" "out/mapping-${SHORT_SHA}.txt"; fi
-          apksigner verify --verbose --print-certs "out/azahar-gt6-${SHORT_SHA}.apk" | tee out/signature.txt
+          apksigner verify --verbose --print-certs "out/azahar-optimised-${SHORT_SHA}.apk" | tee out/signature.txt
           if grep -q "Android Debug" out/signature.txt; then
             echo "::error::APK is signed with the debug key, not the release keystore"
             exit 1
           fi
-          sha256sum "out/azahar-gt6-${SHORT_SHA}.apk" | tee out/sha256.txt
+          sha256sum "out/azahar-optimised-${SHORT_SHA}.apk" | tee out/sha256.txt
           echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           {
             echo "### azahar-gt6-${SHORT_SHA}"

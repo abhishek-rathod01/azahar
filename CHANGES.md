@@ -18,7 +18,7 @@ possible so that rebasing onto a newer tag stays cheap.
 |---|---|---|
 | `android` | ABI filter is `arm64-v8a` only | Target phone is arm64; roughly halves native build time and APK size. |
 | `android` | `applicationId` = `org.azahar_emu.azahar.gt6` | Installs next to the official app for A/B comparison. No provider/authority uses the id. |
-| `android` | App label "Azahar GT6" | Tell the two apps apart. |
+| `android` | App label "Azahar Optimised" (APK file `azahar-optimised-<short-sha>.apk` inside the `azahar-gt6-<short-sha>` artifact) | Tell the two apps apart. The package id stays `org.azahar_emu.azahar.gt6`. |
 | `ci` | `gt6-android.yml`: Android-only, signs with repo secrets, uploads `azahar-gt6-<short-sha>` | Phone-only workflow: the APK comes from Actions. Never publishes an APK signed with the debug key. |
 | `ci` | `"!gt6"` added to the push branches of `build.yml` and `libretro.yml` | Both upstream workflows otherwise build on every push to every branch. Confirmed on GitHub: only `gt6-android` and the cheap `format` check run. |
 | `common`, `video_core`, `android` | Performance Log (see below) | Needed to find the cause of the jitter bug with data instead of guesses. Off by default. |
