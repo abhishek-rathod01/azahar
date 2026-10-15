@@ -1,0 +1,76 @@
+name: gt6-publish
+
+# Publishes the APK of an earlier gt6-android run as a GitHub pre-release WITHOUT rebuilding it.
+# A rebuild would get a new version code (it is derived from the build time), which could break the
+# order in which the builds can update each other.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run id of the gt6-android run whose artifact to publish (the number in the run's URL)"
+        required: true
+      release_title:
+        description: "Title of the release (empty = 'Azahar GT6 <name of the APK>')"
+        required: false
+        default: ""
+
+permissions:
+  contents: write # create the release
+  actions: read # download the run's artifact
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # The text inputs go through env vars, never straight into the script.
+      - name: Publish the artifact of that run as a pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ inputs.run_id }}
+          RELEASE_TITLE: ${{ inputs.release_title }}
+        run: |
+          set -ex
+          case "${RUN_ID}" in ''|*[!0-9]*) echo "::error::run_id must be a number"; exit 1 ;; esac
+          mkdir dl
+          gh run download "${RUN_ID}" --dir dl
+          mapfile -t APKS < <(find dl -name 'azahar-optimised-*.apk')
+          if [ "${#APKS[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly 1 APK in run ${RUN_ID}, found ${#APKS[@]}"
+            ls -R dl
+            exit 1
+          fi
+          APK="${APKS[0]}"
+          NAME="$(basename "${APK}")"
+          STEM="${NAME#azahar-optimised-}"
+          STEM="${STEM%.apk}"
+          TAG="gt6-${STEM}"
+          # The file name carries the short sha of the commit that was built (not of the workflow file)
+          SHORT_SHA="${STEM%%-*}"
+          FULL_SHA="$(gh api "repos/${GH_REPO}/commits/${SHORT_SHA}" --jq .sha)"
+          TITLE="${RELEASE_TITLE:-Azahar GT6 ${NAME}}"
+          (cd "$(dirname "${APK}")" && sha256sum "${NAME}") > dl/sha256.txt
+          {
+            echo "Built by GitHub Actions from commit \`${FULL_SHA}\` of this fork (run ${RUN_ID}); published from that run's artifact, not rebuilt."
+            echo
+            echo "Signed with a TEST key kept in the Actions cache. Updating over an older build of this fork works as long as the key is unchanged; if Android says the app conflicts with an existing package, uninstall the old copy once (the app's own switches reset; copy your Azahar user folder somewhere first to be safe)."
+            echo
+            echo "Package \`org.azahar_emu.azahar.gt6\`: installs next to the official Azahar, never over it."
+            echo "Not tested on a device when published; see CHANGES.md and docs/GT6-TEST-ROUNDS.md in the repo."
+            echo
+            echo "SHA-256:"
+            echo '```'
+            cat dl/sha256.txt
+            echo '```'
+          } > dl/release-notes.md
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "::error::Release ${TAG} already exists"
+            exit 1
+          fi
+          gh release create "${TAG}" "${APK}" dl/sha256.txt \
+            --target "${FULL_SHA}" --prerelease --title "${TITLE}" --notes-file dl/release-notes.md
+          URL="$(gh release view "${TAG}" --json url --jq .url)"
+          echo "Release: ${URL}"
+          echo "### Release: ${URL}" >> "$GITHUB_STEP_SUMMARY"
