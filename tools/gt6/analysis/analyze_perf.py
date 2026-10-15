@@ -12,9 +12,12 @@ Definitions (stated so numbers are reproducible):
   p99 frame     99th percentile of frame_ms, linear interpolation
   1% low FPS    1000 / mean of the slowest 1 % of frames (at least one frame)
   stutter       frame_ms > 1.5 * median frame_ms
-  jitter episode  rolling 1 s windows (0.5 s step) whose p99 frame_ms > 25 ms, merged when
-                consecutive; an episode counts if it lasts longer than 2 s (the acceptance
-                criterion from the brief)
+  jitter episode  the log is cut into non-overlapping 1 s bins; a bin is bad when its p99
+                frame_ms > 25 ms, or when it holds fewer than 5 frames (a stall). More than 2
+                consecutive bad bins (i.e. 3 or more) form an episode, matching the brief's
+                "p99 > 25 ms for longer than 2 s". Time between emu_pause and emu_unpause is
+                ignored. Bins quantise the edges, so an episode can be up to ~1 s longer than
+                the real misbehaviour; the per-second p99 values are also printed.
 """
 
 import argparse
@@ -59,13 +62,17 @@ def load(path):
     for line in lines:
         if line.startswith("#"):
             body = line[1:].strip()
-            for token in body.split():
-                if "=" in token:
-                    key, _, value = token.partition("=")
-                    header[key] = value
-            if "=" in body and " " not in body.split("=")[0]:
+            if body.count("=") == 1:
+                # "key=value": the value may contain spaces (device name, ...)
                 key, _, value = body.partition("=")
-                header[key.strip()] = value.strip()
+                if " " not in key:
+                    header[key] = value.strip()
+            else:
+                # "a=1 b=2": several short tokens on one line (e.g. the dropped_* summary)
+                for token in body.split():
+                    if "=" in token:
+                        key, _, value = token.partition("=")
+                        header[key] = value
             continue
         rows.append(line)
     if not rows:
@@ -93,13 +100,16 @@ def load(path):
     return header, frames, events
 
 
-def summarize(frames):
+def summarize(frames, ref_median=None):
     ft = sorted(f["frame"] for f in frames if f["frame"] is not None)
     if not ft:
         return {"frames": 0}
     n = len(ft)
     active_s = sum(ft) / 1000.0
     median = pct(ft, 50)
+    # Stutter threshold is relative to the whole session's median when given: inside a bad
+    # window the window's own median rises and would hide the very stutters being counted.
+    ref = ref_median if ref_median is not None else median
     worst = ft[-max(1, n // 100):]
     work = sorted(f["work"] for f in frames if f["work"] is not None)
     slp = sorted(f["sleep"] for f in frames if f["sleep"] is not None)
@@ -115,7 +125,7 @@ def summarize(frames):
         "p999_ms": round(pct(ft, 99.9), 3),
         "max_ms": round(ft[-1], 3),
         "low1_fps": round(1000.0 / (sum(worst) / len(worst)), 2),
-        "stutters": sum(1 for v in ft if v > 1.5 * median),
+        "stutters": sum(1 for v in ft if v > 1.5 * ref),
         "work_mean_ms": round(sum(work) / len(work), 3) if work else None,
         "work_p99_ms": round(pct(work, 99), 3) if work else None,
         "sleep_mean_ms": round(sum(slp) / len(slp), 3) if slp else None,
@@ -124,31 +134,56 @@ def summarize(frames):
     }
 
 
-def episodes(frames, limit_ms=25.0, window_s=1.0, step_s=0.5, min_len_s=2.0):
-    """Jitter episodes per the brief: p99 frame time above limit_ms for longer than min_len_s."""
+def paused_spans(events):
+    """(start, end) seconds between emu_pause and the following emu_unpause."""
+    spans, start = [], None
+    for e in events:
+        if e["name"] == "emu_pause" and start is None:
+            start = e["t"]
+        elif e["name"] == "emu_unpause" and start is not None:
+            spans.append((start, e["t"] + 1.0))  # +1 s: the logger drops the first frame back
+            start = None
+    if start is not None:
+        spans.append((start, float("inf")))
+    return spans
+
+
+def bin_p99(frames, events=(), bin_s=1.0):
+    """[(bin_start_s, frame_count, p99_ms or None, paused)] for each full bin."""
     if not frames:
         return []
-    t0, t1 = frames[0]["t"], frames[-1]["t"]
-    flagged = []
-    start = t0
-    while start + window_s <= t1 + 1e-9:
-        vals = sorted(f["frame"] for f in frames
-                      if start <= f["t"] < start + window_s and f["frame"] is not None)
-        # a window with almost no frames is a stall, which is jitter too
-        bad = (len(vals) < 5) or pct(vals, 99) > limit_ms
-        flagged.append((start, start + window_s, bad))
-        start += step_s
+    t0 = frames[0]["t"]
+    nbins = int((frames[-1]["t"] - t0) // bin_s)
+    bins = [[] for _ in range(nbins)]
+    for f in frames:
+        i = int((f["t"] - t0) // bin_s)
+        if i < nbins and f["frame"] is not None:
+            bins[i].append(f["frame"])
+    spans = paused_spans(events)
+    out = []
+    for i, vals in enumerate(bins):
+        a = t0 + i * bin_s
+        paused = any(a < y and a + bin_s > x for x, y in spans)
+        vals.sort()
+        out.append((a, len(vals), pct(vals, 99) if vals else None, paused))
+    return out
+
+
+def episodes(frames, events=(), limit_ms=25.0, min_bins=3):
+    """Jitter episodes per the brief (see module docstring for the exact rule)."""
     out, cur = [], None
-    for a, b, bad in flagged:
+    for a, n, p99, paused in bin_p99(frames, events):
+        bad = (not paused) and (n < 5 or (p99 is not None and p99 > limit_ms))
         if bad:
-            cur = [a, b] if cur is None else [cur[0], b]
-        elif cur is not None:
-            out.append(cur)
+            cur = [a, a + 1.0, 1] if cur is None else [cur[0], a + 1.0, cur[2] + 1]
+        else:
+            if cur is not None and cur[2] >= min_bins:
+                out.append(cur)
             cur = None
-    if cur is not None:
+    if cur is not None and cur[2] >= min_bins:
         out.append(cur)
     return [{"start_s": round(a, 2), "end_s": round(b, 2), "length_s": round(b - a, 2)}
-            for a, b in out if b - a > min_len_s]
+            for a, b, _ in out]
 
 
 def parse_clusters(text):
@@ -212,6 +247,7 @@ def report(path, window, clusters):
         out.append("Settings in effect: " + ", ".join(
             f"{k}={header[k]}" for k in keep if k in header) + "\n")
     overall = summarize(frames)
+    ref = overall.get("median_ms")  # session median: the stutter reference for every window
     out.append("## Overall\n")
     out.append("| span | frames | avg FPS | p99 ms | 1% low FPS | stutters | work ms | sleep ms |")
     out.append("|---|---|---|---|---|---|---|---|")
@@ -223,7 +259,7 @@ def report(path, window, clusters):
                    f"mean emulation speed {overall['speed_mean_pct']} %, "
                    f"sleep p1 {overall['sleep_p1_ms']} ms (near 0 = no headroom)\n")
 
-    eps = episodes(frames)
+    eps = episodes(frames, events)
     out.append("## Jitter episodes (p99 > 25 ms for > 2 s)\n")
     out.append("none\n" if not eps else "\n".join(
         f"* {e['start_s']} s to {e['end_s']} s ({e['length_s']} s)" for e in eps) + "\n")
@@ -234,7 +270,7 @@ def report(path, window, clusters):
     if frames:
         last_min = int(frames[-1]["t"] // 60)
         for m in range(last_min + 1):
-            out.append(fmt_row(str(m), summarize(around(frames, m * 60, (m + 1) * 60))))
+            out.append(fmt_row(str(m), summarize(around(frames, m * 60, (m + 1) * 60), ref)))
     out.append("")
 
     cores, groups = cpu_share(frames, clusters)
@@ -277,10 +313,10 @@ def report(path, window, clusters):
     out.append("| what | when s | frames | avg FPS | p99 ms | 1% low FPS | stutters | work ms | sleep ms |")
     out.append("|---|---|---|---|---|---|---|---|---|")
     for e in marks:
-        out.append(fmt_row(f"before MARK", summarize(around(frames, e["t"] - window, e["t"])))
+        out.append(fmt_row("before MARK", summarize(around(frames, e["t"] - window, e["t"]), ref))
                    .replace("| before MARK |", f"| before MARK | {e['t']:.1f} |", 1))
     for e in resumes:
-        out.append(fmt_row("after emu_unpause", summarize(around(frames, e["t"], e["t"] + window)))
+        out.append(fmt_row("after emu_unpause", summarize(around(frames, e["t"], e["t"] + window), ref))
                    .replace("| after emu_unpause |", f"| after emu_unpause | {e['t']:.1f} |", 1))
     out.append("")
     return "\n".join(out), {
