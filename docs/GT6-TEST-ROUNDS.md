@@ -16,10 +16,22 @@ over a *newer* build of the same app. Build and test in this order:
    the baseline round, so it installs over the baseline and keeps its settings.
 
 Both use the package `org.azahar_emu.azahar.gt6`, so they install next to the official Azahar,
-never over it. They need the three repository secrets (`ANDROID_KEYSTORE_B64`,
-`ANDROID_KEYSTORE_PASS`, `ANDROID_KEY_ALIAS`); without them CI only compiles and publishes
-nothing. The download is the artifact `azahar-gt6-<short-sha>` of the *gt6-android* run, and the
-APK inside is `azahar-optimised-<short-sha>.apk`.
+never over it.
+
+**Where to download:** the Releases page of the fork,
+`https://github.com/abhishek-rathod01/azahar/releases`. Tap the `.apk` under *Assets*. The browser
+asks once to allow installs from it, and Play Protect may warn about an unknown developer; for your
+own build "Install anyway" is the right answer. Each run of *gt6-android* also keeps the same files
+as an Actions artifact (`azahar-gt6-<short-sha>[-testkey]`, a zip) for 30 days.
+
+**Signing:** until the three repository secrets (`ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASS`,
+`ANDROID_KEY_ALIAS`) exist, builds are signed with a test key that the workflow keeps in the
+GitHub Actions cache, and every name ends in `-testkey`. Builds signed with the same test key
+update each other. GitHub deletes cache entries that were not used for 7 days; after that the next
+build has a new key, and Android answers "App not installed as package conflicts with an existing
+package". Uninstall the old copy once and install again (the app's own switches reset; copy your
+Azahar user folder somewhere first to be safe). Adding the secrets later switches to the permanent
+key, which needs the same one-time uninstall.
 
 ## One-time Termux setup (about 10 minutes)
 
