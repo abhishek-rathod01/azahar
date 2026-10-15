@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: gt6-android-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false # queue instead: cancelling a native build also loses its cache save
 
 jobs:
   android:
