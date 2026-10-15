@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "common/frame_pacing.h"
 #include "common/perf_log.h"
 #include "common/settings.h"
 #include "core/core.h"
@@ -52,7 +53,9 @@ void RendererBase::EndFrame() {
     if (perf_log) {
         Common::PerfLog::FrameReady();
     }
+    Common::FramePacing::FrameWorkEnd();
     system.frame_limiter.DoFrameLimiting(system.CoreTiming().GetGlobalTimeUs());
+    Common::FramePacing::FrameWorkBegin();
     if (perf_log) {
         Common::PerfLog::FrameDone(system.CoreTiming().GetGlobalTimeUs().count());
     }

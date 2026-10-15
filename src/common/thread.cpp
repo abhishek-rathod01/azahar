@@ -2,6 +2,8 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include <algorithm>
+#include <array>
 #include <string>
 
 #include "common/error.h"
@@ -22,6 +24,9 @@
 #endif
 #ifndef _WIN32
 #include <unistd.h>
+#endif
+#ifdef __ANDROID__
+#include <sys/resource.h>
 #endif
 
 #ifdef __FreeBSD__
@@ -61,6 +66,18 @@ void SetCurrentThreadPriority(ThreadPriority new_priority) {
 #else
 
 void SetCurrentThreadPriority(ThreadPriority new_priority) {
+#if defined(__ANDROID__)
+    // SCHED_OTHER has a single priority level, so the nice value is what can be changed. Android
+    // lets an app lower it a little, which is how it raises its own UI and render threads.
+    static constexpr std::array<int, 5> nice_values{5, 0, -2, -4, -8};
+    const auto index =
+        std::min<std::size_t>(static_cast<std::size_t>(new_priority), nice_values.size() - 1);
+    const int nice = nice_values[index];
+    if (setpriority(PRIO_PROCESS, static_cast<id_t>(gettid()), nice) != 0) {
+        LOG_WARNING(Common, "setpriority({}) failed: {}", nice, GetLastErrorMsg());
+    }
+    return;
+#endif
     pthread_t this_thread = pthread_self();
 
     const auto scheduling_type = SCHED_OTHER;

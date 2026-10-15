@@ -4,6 +4,7 @@
 
 #include <mutex>
 #include <utility>
+#include "common/frame_pacing.h"
 #include "common/microprofile.h"
 #include "common/thread.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -116,6 +117,7 @@ void Scheduler::DispatchWork() {
 
 void Scheduler::WorkerThread(std::stop_token stop_token) {
     Common::SetCurrentThreadName("VulkanWorker");
+    Common::FramePacing::OnThreadStart("VulkanWorker");
 
     const auto TryPopQueue{[this](auto& work) -> bool {
         if (work_queue.empty()) {

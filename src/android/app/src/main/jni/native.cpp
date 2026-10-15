@@ -27,6 +27,7 @@
 #include "common/dynamic_library/dynamic_library.h"
 #include "common/file_derived.h"
 #include "common/file_util.h"
+#include "common/frame_pacing.h"
 #include "common/logging/backend.h"
 #include "common/logging/log.h"
 #include "common/microprofile.h"
@@ -203,6 +204,8 @@ static Core::System::ResultStatus RunCitra(const std::string& filepath) {
     LOG_INFO(Frontend, "Azahar starting...");
 
     MicroProfileOnThreadCreate("EmuThread");
+    Common::FramePacing::OnThreadStart("NativeEmulation");
+    SCOPE_EXIT({ Common::FramePacing::EndSession(); });
 
     if (filepath.empty()) {
         LOG_CRITICAL(Frontend, "Failed to load ROM: No ROM specified");

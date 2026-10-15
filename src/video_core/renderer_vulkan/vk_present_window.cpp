@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "common/frame_pacing.h"
 #include "common/microprofile.h"
 #include "common/perf_log.h"
 #include "common/settings.h"
@@ -317,6 +318,7 @@ void PresentWindow::WaitPresent() {
 
 void PresentWindow::PresentThread(std::stop_token token) {
     Common::SetCurrentThreadName("VulkanPresent");
+    Common::FramePacing::OnThreadStart("VulkanPresent");
     while (!token.stop_requested()) {
         std::unique_lock lock{queue_mutex};
 
