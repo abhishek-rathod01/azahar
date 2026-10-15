@@ -1640,6 +1640,15 @@ class EmulationFragment :
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         Log.debug("[EmulationFragment] Surface changed. Resolution: " + width + "x" + height)
         PerfLog.event("surface_changed ${width}x$height")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // Tell SurfaceFlinger the content is a fixed 60 fps source so it keeps a 60 Hz
+            // compatible display mode, and may switch to one if it is not on one already
+            holder.surface.setFrameRate(
+                60f,
+                Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
+                Surface.CHANGE_FRAME_RATE_ALWAYS
+            )
+        }
         emulationState.newSurface(holder.surface)
     }
 
