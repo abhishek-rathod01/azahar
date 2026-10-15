@@ -25,20 +25,23 @@ jobs:
       CCACHE_COMPILERCHECK: content
       CCACHE_SLOPPINESS: time_macros
     steps:
-      # Fail in seconds, not after a 40 minute build, if signing is not set up.
-      # Building without the keystore would silently fall back to the debug key,
-      # and an APK signed with a different key cannot update an installed one.
+      # Without the keystore the release build would silently fall back to the
+      # debug key, and an APK signed with a different key cannot update an
+      # installed one. So without secrets we still compile (useful as a compile
+      # check) but never publish an APK.
       - name: Check signing secrets
+        id: secrets
         env:
           KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
           KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
           KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
-          missing=0
-          [ -n "$KS_B64" ]   || { echo "::error::Repo secret ANDROID_KEYSTORE_B64 is not set"; missing=1; }
-          [ -n "$KS_PASS" ]  || { echo "::error::Repo secret ANDROID_KEYSTORE_PASS is not set"; missing=1; }
-          [ -n "$KS_ALIAS" ] || { echo "::error::Repo secret ANDROID_KEY_ALIAS is not set"; missing=1; }
-          exit $missing
+          if [ -n "$KS_B64" ] && [ -n "$KS_PASS" ] && [ -n "$KS_ALIAS" ]; then
+            echo "have_secrets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have_secrets=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Signing secrets missing (need ANDROID_KEYSTORE_B64, ANDROID_KEYSTORE_PASS, ANDROID_KEY_ALIAS). Compile check only: no APK will be published."
+          fi
 
       - uses: actions/checkout@v6
         with:
@@ -66,6 +69,7 @@ jobs:
 
       - name: Build (assembleVanillaRelease)
         env:
+          HAVE_SECRETS: ${{ steps.secrets.outputs.have_secrets }}
           ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
@@ -73,16 +77,25 @@ jobs:
           set -ex
           export JAVA_HOME="$JAVA_HOME_17_X64"
           export NDK_CCACHE="$(which ccache)"
-          export ANDROID_KEYSTORE_FILE="${RUNNER_TEMP}/gt6-release.jks"
-          base64 --decode <<< "${ANDROID_KEYSTORE_B64}" > "${ANDROID_KEYSTORE_FILE}"
+          if [ "${HAVE_SECRETS}" = "true" ]; then
+            export ANDROID_KEYSTORE_FILE="${RUNNER_TEMP}/gt6-release.jks"
+            base64 --decode <<< "${ANDROID_KEYSTORE_B64}" > "${ANDROID_KEYSTORE_FILE}"
+          fi
           cd src/android
           chmod +x ./gradlew
           ./gradlew assembleVanillaRelease
           ccache -s -v
-          rm -f "${ANDROID_KEYSTORE_FILE}"
+          if [ -n "${ANDROID_KEYSTORE_FILE:-}" ]; then rm -f "${ANDROID_KEYSTORE_FILE}"; fi
+
+      - name: Compile check only (no APK published)
+        if: steps.secrets.outputs.have_secrets != 'true'
+        run: |
+          echo "### Compile check passed, but NO APK was published" >> "$GITHUB_STEP_SUMMARY"
+          echo "Add repo secrets ANDROID_KEYSTORE_B64, ANDROID_KEYSTORE_PASS and ANDROID_KEY_ALIAS, then re-run." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Locate and verify APK
         id: apk
+        if: steps.secrets.outputs.have_secrets == 'true'
         run: |
           set -ex
           SHORT_SHA="${GITHUB_SHA::7}"
@@ -114,6 +127,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload APK
+        if: steps.secrets.outputs.have_secrets == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: azahar-gt6-${{ steps.apk.outputs.short_sha }}
