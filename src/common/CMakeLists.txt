@@ -64,6 +64,8 @@ add_library(citra_common STATIC EXCLUDE_FROM_ALL
     optional_helper.h
     param_package.cpp
     param_package.h
+    perf_log.cpp
+    perf_log.h
     play_time_manager.cpp
     play_time_manager.h
     polyfill_thread.h
