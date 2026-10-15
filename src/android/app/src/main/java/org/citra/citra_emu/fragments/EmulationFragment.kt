@@ -83,6 +83,7 @@ import org.citra.citra_emu.utils.EmulationMenuSettings
 import org.citra.citra_emu.utils.GameHelper
 import org.citra.citra_emu.utils.GameIconUtils
 import org.citra.citra_emu.utils.Log
+import org.citra.citra_emu.utils.PerfLog
 import org.citra.citra_emu.utils.ViewUtils
 import org.citra.citra_emu.viewmodel.EmulationViewModel
 
@@ -229,6 +230,7 @@ class EmulationFragment :
         }
 
         binding.surfaceEmulation.holder.addCallback(this)
+        PerfLog.attachMarkButton(binding.coordinatorLayout)
         binding.doneControlConfig.setOnClickListener {
             binding.doneControlConfig.visibility = View.GONE
             binding.surfaceInputOverlay.setIsInEditMode(false)
@@ -529,6 +531,7 @@ class EmulationFragment :
 
     override fun onResume() {
         super.onResume()
+        PerfLog.event("fragment_resume")
         Choreographer.getInstance().postFrameCallback(this)
         if (NativeLibrary.isRunning()) {
             emulationState.unpause()
@@ -556,6 +559,7 @@ class EmulationFragment :
     }
 
     override fun onPause() {
+        PerfLog.event("fragment_pause")
         if (NativeLibrary.isRunning()) {
             emulationState.pause()
         }
@@ -1635,14 +1639,17 @@ class EmulationFragment :
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         Log.debug("[EmulationFragment] Surface changed. Resolution: " + width + "x" + height)
+        PerfLog.event("surface_changed ${width}x$height")
         emulationState.newSurface(holder.surface)
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
+        PerfLog.event("surface_destroyed")
         emulationState.clearSurface()
     }
 
     override fun doFrame(frameTimeNanos: Long) {
+        PerfLog.onVsync(frameTimeNanos)
         Choreographer.getInstance().postFrameCallback(this)
         NativeLibrary.doFrame()
     }
@@ -1713,6 +1720,7 @@ class EmulationFragment :
             if (state != State.PAUSED) {
                 state = State.PAUSED
                 Log.debug("[EmulationFragment] Pausing emulation.")
+                PerfLog.event("emu_pause")
 
                 NativeLibrary.pauseEmulation()
                 NativeLibrary.playTimeManagerStop()
@@ -1726,6 +1734,8 @@ class EmulationFragment :
             if (state != State.RUNNING) {
                 state = State.RUNNING
                 Log.debug("[EmulationFragment] Unpausing emulation.")
+                PerfLog.resetFrameTiming()
+                PerfLog.event("emu_unpause")
 
                 NativeLibrary.unPauseEmulation()
                 NativeLibrary.playTimeManagerStart(NativeLibrary.playTimeManagerGetCurrentTitleId())
@@ -1790,7 +1800,12 @@ class EmulationFragment :
                 State.STOPPED -> {
                     Thread({
                         Log.debug("[EmulationFragment] Starting emulation thread.")
-                        NativeLibrary.run(gamePath)
+                        PerfLog.begin()
+                        try {
+                            NativeLibrary.run(gamePath)
+                        } finally {
+                            PerfLog.end()
+                        }
                     }, "NativeEmulation").start()
                 }
 

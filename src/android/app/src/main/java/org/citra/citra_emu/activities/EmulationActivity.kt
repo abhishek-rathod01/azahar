@@ -55,6 +55,7 @@ import org.citra.citra_emu.utils.EmulationMenuSettings
 import org.citra.citra_emu.utils.FileBrowserHelper
 import org.citra.citra_emu.utils.Log
 import org.citra.citra_emu.utils.NetPlayManager
+import org.citra.citra_emu.utils.PerfLog
 import org.citra.citra_emu.utils.PermissionsHandler
 import org.citra.citra_emu.utils.RefreshRateUtil
 import org.citra.citra_emu.utils.ThemeUtil
@@ -223,6 +224,7 @@ class EmulationActivity : AppCompatActivity() {
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
+        PerfLog.event(if (hasFocus) "window_focus_gained" else "window_focus_lost")
         enableFullscreenImmersive()
         super.onWindowFocusChanged(hasFocus)
     }
