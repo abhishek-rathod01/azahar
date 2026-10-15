@@ -15,6 +15,7 @@
 #include "video_core/pica/shader_setup.h"
 #include "video_core/renderer_vulkan/pica_to_vk.h"
 #include "video_core/renderer_vulkan/vk_descriptor_update_queue.h"
+#include "video_core/renderer_vulkan/vk_driver_cache_footer.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_render_manager.h"
@@ -250,8 +251,9 @@ void PipelineCache::LoadDriverPipelineDiskCache(
         return;
     }
 
-    if (!IsCacheValid(cache_data)) {
-        LOG_WARNING(Render_Vulkan, "Pipeline cache invalid, removing");
+    const std::span<const u8> driver_data = ExtractDriverCacheData(cache_data);
+    if (driver_data.empty() || !IsCacheValid(driver_data)) {
+        LOG_WARNING(Render_Vulkan, "Pipeline cache invalid or incomplete, discarding it");
         cache_file.Close();
         FileUtil::Delete(cache_file_path);
         load_cache(false);
@@ -259,10 +261,10 @@ void PipelineCache::LoadDriverPipelineDiskCache(
     }
 
     LOG_INFO(Render_Vulkan, "Loading pipeline cache for title_id={:016X} with size {} KB",
-             program_id, cache_file_size / 1024);
+             program_id, driver_data.size() / 1024);
 
-    cache_info.initialDataSize = cache_file_size;
-    cache_info.pInitialData = cache_data.data();
+    cache_info.initialDataSize = driver_data.size();
+    cache_info.pInitialData = driver_data.data();
     load_cache(true);
 }
 
@@ -281,17 +283,44 @@ void PipelineCache::SaveDriverPipelineDiskCache() {
     const auto cache_file_path =
         fmt::format("{}{:016X}-{:X}{:X}.bin", cache_dir, program_id, vendor_id, device_id);
 
-    FileUtil::IOFile cache_file{cache_file_path, "wb"};
-    if (!cache_file.IsOpen()) {
-        LOG_ERROR(Render_Vulkan, "Unable to open pipeline cache for writing");
+    const vk::Device device = instance.GetDevice();
+    std::vector<u8> cache_data;
+    try {
+        cache_data = device.getPipelineCacheData(*driver_pipeline_cache);
+    } catch (const vk::SystemError& err) {
+        // Also reached from the destructor, where throwing would terminate the process
+        LOG_ERROR(Render_Vulkan, "Could not read back the pipeline cache: {}", err.what());
         return;
     }
-
-    const vk::Device device = instance.GetDevice();
-    const auto cache_data = device.getPipelineCacheData(*driver_pipeline_cache);
-    if (cache_file.WriteBytes(cache_data.data(), cache_data.size()) != cache_data.size()) {
-        LOG_ERROR(Render_Vulkan, "Error during pipeline cache write");
+    if (cache_data.empty()) {
         return;
+    }
+    const DriverCacheFooter footer = MakeDriverCacheFooter(cache_data);
+
+    // Write to a temporary file and move it into place, so that being killed in the middle of
+    // the write cannot leave a truncated cache behind.
+    const std::string temp_path = cache_file_path + ".tmp";
+    {
+        FileUtil::IOFile temp_file{temp_path, "wb"};
+        if (!temp_file.IsOpen()) {
+            LOG_ERROR(Render_Vulkan, "Unable to open pipeline cache for writing");
+            return;
+        }
+        if (temp_file.WriteBytes(cache_data.data(), cache_data.size()) != cache_data.size() ||
+            temp_file.WriteBytes(&footer, sizeof(footer)) != sizeof(footer) || !temp_file.Flush()) {
+            LOG_ERROR(Render_Vulkan, "Error during pipeline cache write");
+            temp_file.Close();
+            FileUtil::Delete(temp_path);
+            return;
+        }
+    }
+    if (!FileUtil::Rename(temp_path, cache_file_path)) {
+        // Some storage back ends will not replace an existing file
+        FileUtil::Delete(cache_file_path);
+        if (!FileUtil::Rename(temp_path, cache_file_path)) {
+            LOG_ERROR(Render_Vulkan, "Could not move the pipeline cache into place");
+            FileUtil::Delete(temp_path);
+        }
     }
 }
 

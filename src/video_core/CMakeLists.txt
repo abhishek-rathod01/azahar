@@ -182,6 +182,7 @@ if (ENABLE_VULKAN)
         renderer_vulkan/vk_instance.cpp
         renderer_vulkan/vk_instance.h
         renderer_vulkan/vk_pipeline_cache.cpp
+        renderer_vulkan/vk_driver_cache_footer.h
         renderer_vulkan/vk_pipeline_cache.h
         $<$<NOT:$<BOOL:${ENABLE_LIBRETRO}>>:renderer_vulkan/vk_platform.cpp>
         renderer_vulkan/vk_platform.h
